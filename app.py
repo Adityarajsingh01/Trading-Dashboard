@@ -15,14 +15,10 @@ st.set_page_config(
 )
 
 # --- 2. CUSTOM CSS (GREEN MODE) ---
-# This forces the "Emerald & Slate" theme you liked
 st.markdown("""
     <style>
     /* Main Background */
-    .stApp {
-        background-color: #0f172a;
-        color: #10b981;
-    }
+    .stApp { background-color: #0f172a; color: #10b981; }
     
     /* Inputs */
     .stTextInput > div > div > input, 
@@ -33,19 +29,19 @@ st.markdown("""
         border-color: #334155;
     }
     
-    /* Headers */
-    h1, h2, h3, h4, p, label, .stMarkdown {
+    /* Headers & Labels */
+    h1, h2, h3, h4, p, label, .stMarkdown, span {
         color: #10b981 !important;
     }
     
-    /* Metrics/DataFrames */
+    /* Metrics */
     div[data-testid="stMetricValue"] { color: #10b981; }
+    
+    /* Dataframes */
     div[data-testid="stDataFrame"] { background-color: #1e293b; }
     
     /* Tabs */
-    button[data-baseweb="tab"] {
-        color: #10b981;
-    }
+    button[data-baseweb="tab"] { color: #10b981; }
     button[data-baseweb="tab"][aria-selected="true"] {
         background-color: #1e293b;
         border-bottom: 2px solid #10b981;
@@ -57,7 +53,6 @@ st.markdown("""
         color: #0f172a;
         font-weight: bold;
         border: none;
-        border-radius: 4px;
     }
     .stButton > button:hover {
         background-color: #34d399;
@@ -66,8 +61,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. LOGIC ENGINE (Cached for Speed) ---
-# We use @st.cache_data so it doesn't reload the calendar every time you click a button
+# --- 3. LOGIC ENGINE ---
 @st.cache_resource
 def get_engine():
     return MarketDataEngine()
@@ -116,7 +110,6 @@ class MarketDataEngine:
         rate_path_effr = change_series.cumsum() + effr_start
         rate_path_sofr = change_series.cumsum() + sofr_start
         
-        # Apply Turns
         for d in dates:
             addon = 0.0
             if d.is_year_end: addon = turn_premiums['Year End']
@@ -127,9 +120,8 @@ class MarketDataEngine:
             rate_path_sofr.loc[d] += addon
             
         df = pd.DataFrame({'Date': dates, 'EFFR': rate_path_effr.values, 'SOFR': rate_path_sofr.values})
-        # Add Day of Week Logic
+        # DAY OF WEEK ADDED
         df['Day_Name'] = df['Date'].dt.day_name()
-        # Reorder to show Date | Day | Rate
         return df[['Date', 'Day_Name', 'EFFR', 'SOFR']]
 
     def calculate_pricing(self, daily_df):
@@ -157,156 +149,127 @@ class MarketDataEngine:
 
 engine = get_engine()
 
-# Initialize Session State
 if 'scenarios' not in st.session_state:
     st.session_state.scenarios = {}
 
-# --- 4. SIDEBAR INPUTS ---
+# --- 4. SIDEBAR ---
 st.sidebar.title("Global Parameters")
 w_year = st.sidebar.selectbox("Year", [2024, 2025, 2026, 2027], index=2)
 w_effr = st.sidebar.number_input("Start EFFR (%)", value=5.33, step=0.01)
 w_sofr = st.sidebar.number_input("Start SOFR (%)", value=5.33, step=0.01)
-
 st.sidebar.markdown("---")
-st.sidebar.subheader("Turn Premiums (bps)")
-tp_m = st.sidebar.number_input("Month End", value=0.0, step=1.0)
-tp_q = st.sidebar.number_input("Quarter End", value=10.0, step=1.0)
-tp_y = st.sidebar.number_input("Year End", value=25.0, step=1.0)
+tp_m = st.sidebar.number_input("Month End (bps)", value=0.0, step=1.0)
+tp_q = st.sidebar.number_input("Quarter End (bps)", value=10.0, step=1.0)
+tp_y = st.sidebar.number_input("Year End (bps)", value=25.0, step=1.0)
 
-# --- 5. MAIN DASHBOARD ---
+# --- 5. DASHBOARD ---
 st.title("🏛️ STIR TRADER PRO")
-st.markdown(f"**Curve Construction: {w_year} (Green Mode)**")
+st.markdown(f"**Curve: {w_year}**")
 
-# Hikes Grid
+# Hikes
 st.subheader("FOMC Adjustments (bps)")
 dates = engine.fomc_schedule.get(w_year, [])
 hikes = {}
-
-# Responsive Grid for Meeting Inputs
 cols = st.columns(4)
 for i, d in enumerate(dates):
     label = pd.to_datetime(d).strftime('%b %d')
     with cols[i % 4]:
-        # Unique key for each input to prevent conflicts
         val = st.number_input(f"{label}", value=0.0, step=25.0, key=f"meet_{d}")
         hikes[d] = val / 100.0
 
-# --- REACTIVE CALCULATION ---
-# Streamlit re-runs the script from top to bottom on every interaction
+# Calculation
 turns = {'Month End': tp_m/100, 'Quarter End': tp_q/100, 'Year End': tp_y/100}
 daily = engine.generate_daily_curve(w_year, w_effr, w_sofr, hikes, turns)
 pricing = engine.calculate_pricing(daily)
 impact = engine.generate_impact_matrix(w_year)
 strategies = engine.calculate_strategies(pricing)
 
-# --- TABS FOR ANALYSIS ---
-tab1, tab2, tab3 = st.tabs(["📊 Builder", "🔍 Analysis", "💾 Scenarios & Export"])
+# --- TABS ---
+tab1, tab2, tab3 = st.tabs(["📊 Builder", "🛠️ Spread Maker & Analysis", "💾 Export"])
 
 with tab1:
-    # Plotly Chart
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=daily['Date'], y=daily['EFFR'], name='EFFR', line=dict(color='#10b981', width=2)))
     fig.add_trace(go.Scatter(x=daily['Date'], y=daily['SOFR'], name='SOFR', line=dict(color='#3b82f6', dash='dot')))
-    fig.update_layout(
-        height=450, 
-        paper_bgcolor='rgba(0,0,0,0)', 
-        plot_bgcolor='rgba(0,0,0,0)', 
-        font_color='#10b981',
-        margin=dict(l=20, r=20, t=20, b=20),
-        legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center"),
-        title="Projected Rates (Step Accrual)"
-    )
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#334155')
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#334155')
+    fig.update_layout(height=450, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#10b981',
+                      margin=dict(l=20, r=20, t=20, b=20), legend=dict(orientation="h", y=1.02))
     st.plotly_chart(fig, use_container_width=True)
-
-    # Pricing Table with Green Gradient
     st.subheader("Pricing Strip")
-    st.dataframe(
-        pricing[['Month_Label', 'Code', 'ZQ', 'SR1', 'Basis_bps']].style
-        .format({'ZQ':'{:.3f}', 'SR1':'{:.3f}', 'Basis_bps':'{:+.1f}'})
-        .background_gradient(cmap='Greens', subset=['Basis_bps']),
-        use_container_width=True
-    )
+    st.dataframe(pricing[['Month_Label', 'Code', 'ZQ', 'SR1', 'Basis_bps']].style.format({'ZQ':'{:.3f}', 'SR1':'{:.3f}', 'Basis_bps':'{:+.1f}'}).background_gradient(cmap='Greens', subset=['Basis_bps']), use_container_width=True)
 
 with tab2:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Strategy Monitor")
-        st.dataframe(
-            strategies.style.format({'Price': '{:+.1f}'})
-            .background_gradient(cmap='RdYlGn', subset=['Price']),
-            use_container_width=True
-        )
-    with col2:
-        st.subheader("Impact Matrix")
-        st.dataframe(
-            impact.style.format("{:.1%}", subset=impact.columns[2:])
-            .background_gradient(cmap='Greens'),
-            use_container_width=True
-        )
+    # --- CUSTOM SPREAD MAKER ---
+    st.markdown("### 🛠️ Custom Spread Maker")
+    with st.container():
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            leg1_type = st.selectbox("Leg 1", ["SR1", "ZQ"], key="l1t")
+            leg1_m = st.selectbox("Month", pricing['Month_Label'], key="l1m")
+        with c2:
+            leg2_type = st.selectbox("Leg 2", ["SR1", "ZQ"], key="l2t")
+            leg2_m = st.selectbox("Month", pricing['Month_Label'], key="l2m", index=1 if len(pricing)>1 else 0)
+        
+        # Calc Custom Spread
+        p1 = pricing.loc[pricing['Month_Label'] == leg1_m, leg1_type].values[0]
+        p2 = pricing.loc[pricing['Month_Label'] == leg2_m, leg2_type].values[0]
+        custom_val = (p1 - p2) * 100
+        
+        with c3:
+            st.metric("Spread Value (bps)", f"{custom_val:+.1f}")
+        with c4:
+            st.caption(f"{leg1_type} {leg1_m} vs {leg2_type} {leg2_m}")
+            
+    st.markdown("---")
+    
+    # --- BASIS ANALYZER & STRATEGIES ---
+    col_l, col_r = st.columns(2)
+    with col_l:
+        st.subheader("📉 Basis Analyzer (ZQ - SR1)")
+        # Chart for Basis
+        fig_basis = go.Figure()
+        fig_basis.add_trace(go.Bar(x=pricing['Code'], y=pricing['Basis_bps'], name='Basis', marker_color='#10b981'))
+        fig_basis.update_layout(height=350, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#10b981', title="Basis Spread Term Structure")
+        st.plotly_chart(fig_basis, use_container_width=True)
+
+    with col_r:
+        st.subheader("Standard Strategy Ladder")
+        st.dataframe(strategies.style.format({'Price': '{:+.1f}'}).background_gradient(cmap='RdYlGn', subset=['Price']), use_container_width=True)
 
 with tab3:
     st.subheader("Scenario Manager")
-    
     c1, c2 = st.columns([3, 1])
-    with c1:
-        scenario_name = st.text_input("Scenario Name", value="Base Case")
-    with c2:
-        st.write("") # Spacer
-        st.write("") 
+    with c1: scenario_name = st.text_input("Scenario Name", value="Base Case")
+    with c2: 
+        st.write(""); st.write("")
         if st.button("Save Scenario"):
-            # Safe copy of data
             st.session_state.scenarios[scenario_name] = pricing.copy()
             st.success(f"Saved: {scenario_name}")
 
     if st.session_state.scenarios:
         st.write("---")
         st.subheader("Export to Excel")
-        
-        # EXCEL GENERATION LOGIC
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # Current Active Data
             pricing.to_excel(writer, sheet_name='Active_Pricing', index=False)
-            
-            # Daily Audit with Day of Week
-            daily.to_excel(writer, sheet_name='Active_Daily_Rates', index=False)
-            
+            daily.to_excel(writer, sheet_name='Active_Daily_Rates', index=False) # Has Day_Name
             strategies.to_excel(writer, sheet_name='Active_Strategies', index=False)
             
-            # Scenario Comparison
             dfs = []
             for name, df in st.session_state.scenarios.items():
                 temp = df[['Month_Label', 'SR1']].copy()
                 temp.rename(columns={'SR1': name}, inplace=True)
                 dfs.append(temp)
-            
             if dfs:
                 final_comp = dfs[0]
-                for i in range(1, len(dfs)):
-                    final_comp = pd.merge(final_comp, dfs[i], on='Month_Label')
+                for i in range(1, len(dfs)): final_comp = pd.merge(final_comp, dfs[i], on='Month_Label')
                 final_comp.to_excel(writer, sheet_name='Scenario_Comparison', index=False)
                 
-            # Add Native Excel Chart (Green Line)
-            workbook = writer.book
+            wb = writer.book
             ws = writer.sheets['Active_Pricing']
-            chart = workbook.add_chart({'type': 'line'})
+            chart = wb.add_chart({'type': 'line'})
             max_row = len(pricing) + 1
-            chart.add_series({
-                'name': 'SR1 Price',
-                'categories': ['Active_Pricing', 1, 0, max_row-1, 0], # Month Label
-                'values':     ['Active_Pricing', 1, 3, max_row-1, 3], # SR1 Column
-                'line':       {'color': '#10b981', 'width': 2.25}
-            })
-            chart.set_title({'name': 'Active Curve'})
+            chart.add_series({'name': 'SR1 Price', 'categories': ['Active_Pricing', 1, 0, max_row-1, 0], 'values': ['Active_Pricing', 1, 3, max_row-1, 3], 'line': {'color': '#10b981', 'width': 2.25}})
             ws.insert_chart('G2', chart)
                 
         output.seek(0)
-        
-        st.download_button(
-            label="📥 Download STIR_Master_Analysis.xlsx",
-            data=output,
-            file_name="STIR_Master_Analysis.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button("📥 Download STIR_Master.xlsx", output, "STIR_Master.xlsx")
